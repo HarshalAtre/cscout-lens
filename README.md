@@ -12,6 +12,10 @@ The approach: CScout already exposes its data through HTML query pages. The exte
 
 ---
 
+## DEMO
+
+[![Extension Demo](https://img.youtube.com/vi/5rS2wp8-LJQ/0.jpg)](https://www.youtube.com/watch?v=5rS2wp8-LJQ)
+
 ## What's working in this POC
 
 | Feature | Status |
