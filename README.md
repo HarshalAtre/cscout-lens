@@ -143,6 +143,27 @@ src/
 
 ---
 
+## Trying the features
+
+Once connected, here is what you can explore:
+
+**Workspace and symbols (sidebar)**
+- Expand the CScout Lens sidebar. You will see three views: Projects/Files, Identifiers by Kind, and File Metrics.
+- Under Identifiers, expand any category (Functions, Macros, Typedefs, etc.), then expand a symbol name. You will see occurrence nodes like `awk.c:80:0`. Click one and it opens the file at that exact line.
+- Identifiers marked "unused" appear with a warning icon. These same symbols also show up in the Problems panel (`Ctrl+Shift+M`) as diagnostics. Clicking a problem there jumps directly to the declaration.
+
+**Hover and go-to-definition**
+- Open any `.c` file from the analyzed workspace. Hover over a function name or identifier to see the kind (function / macro / typedef / etc.) and whether it is unused according to whole-program analysis.
+- `F12` (Go to Definition) on any identifier navigates to its first definition site.
+
+**File metrics**
+- Open a `.c` file and run `CScout Lens: Analyze Current File` from the Command Palette. The file moves to the top of the File Metrics panel and its metrics (lines, complexity, etc.) are shown.
+
+**Call graph**
+- Place the cursor on a function name in a `.c` file, then run `CScout Lens: Map Function Calls`. The Function Map panel shows callers and callees of that function. Expand either group and click a function name to jump to it.
+
+---
+
 ## What remains for GSoC
 
 This POC covers the full extension side against CScout's existing HTML interface. No changes to the CScout C++ source were needed. The actual GSoC work splits into two halves.
@@ -157,6 +178,6 @@ To expose internal data structures through a proper REST interface, the same way
 **Extension side**
 
 - Replace the HTML parsing in `client.ts` with clean JSON responses once the REST layer exists
-- Refactoring preview shown as a VS Code diff editor 
+- Refactoring preview shown as a VS Code diff editor
 - `CodeLens` annotations showing call count and cyclomatic complexity inline in the editor
 - Interactive call graph as a WebView panel with expand/collapse, not just a static tree

@@ -156,10 +156,13 @@ export class CScoutAnalyzerClient {
             const dirM = dirRe.exec(row);
             const fidM = fidRe.exec(row);
             const nameM = nameFromLinkRe.exec(row);
-            if (dirM && fidM && nameM) {
+            if (fidM && nameM) {
+                const dir = dirM ? dirM[1].trim() : '';
+                const name = nameM[1].trim();
+                const rawPath = dir ? dir + name : name;
                 files.push({
                     fid: parseInt(fidM[1], 10),
-                    fullPath: toWinPath(dirM[1].trim() + nameM[1].trim()),
+                    fullPath: toWinPath(rawPath),
                 });
             }
         }

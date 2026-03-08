@@ -131,6 +131,16 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('cscoutLens.openLocation', async (filePath: string, line: number, col: number) => {
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+            const editor = await vscode.window.showTextDocument(doc);
+            const pos = new vscode.Position(line, col);
+            editor.selection = new vscode.Selection(pos, pos);
+            editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+        }),
+    );
+
+    context.subscriptions.push(
         vscode.commands.registerCommand('cscoutLens.listUnused', async () => {
             if (!analyzer) {
                 vscode.window.showWarningMessage('CScout Lens: not connected.');

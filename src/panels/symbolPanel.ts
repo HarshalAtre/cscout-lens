@@ -48,12 +48,9 @@ class OccurrenceNode extends vscode.TreeItem {
         this.tooltip = `${loc.filePath}:${loc.line}:${loc.column}`;
         this.iconPath = new vscode.ThemeIcon('go-to-file', new vscode.ThemeColor('charts.green'));
         this.command = {
-            command: 'vscode.open',
+            command: 'cscoutLens.openLocation',
             title: 'Go to Location',
-            arguments: [
-                vscode.Uri.file(loc.filePath),
-                { selection: new vscode.Range(loc.line - 1, loc.column, loc.line - 1, loc.column) },
-            ],
+            arguments: [loc.filePath, loc.line - 1, loc.column],
         };
     }
 }
