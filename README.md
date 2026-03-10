@@ -8,13 +8,13 @@ A VS Code extension that brings [CScout](https://www.spinellis.gr/cscout/)'s who
 
 CScout parses entire C workspaces multiple projects, preprocessor macros, cross-file identifier scopes and builds a precise semantic model that no single-file tool can match. Its existing interface is a built-in web server you navigate in a browser. This extension makes the same analysis available as first-class VS Code features.
 
-The approach: CScout already exposes its data through HTML query pages. The extension scrapes those pages over a raw TCP connection (SWILL, CScout's embedded HTTP server, speaks HTTP/1.0 with bare newlines that Node's `http` module rejects) and maps the results to VS Code's provider APIs.
+The approach: CScout exposes its data through a **JSON REST API** added in this GSoC contribution (endpoints under `/api/`). The extension queries these endpoints over a raw TCP connection (SWILL, CScout's embedded HTTP server, speaks HTTP/1.0, which Node's `http` module rejects) and maps the results to VS Code provider APIs.
 
 ---
 
 ## DEMO
 
-[![Extension Demo](https://img.youtube.com/vi/5rS2wp8-LJQ/0.jpg)](https://www.youtube.com/watch?v=5rS2wp8-LJQ)
+[![Extension Demo](https://img.youtube.com/vi/kaDhBLOtNPk/0.jpg)](https://www.youtube.com/watch?v=kaDhBLOtNPk)
 
 ## What's working in this POC
 
@@ -54,6 +54,8 @@ npm run compile
 ```
 
 **2. Run CScout on your C project**
+
+Branch to Use for Json Rest Api : [feat/json-rest-api](https://github.com/HarshalAtre/cscout/tree/feat/json-rest-api)
 
 On Windows (PowerShell, with Cygwin on PATH):
 
@@ -107,22 +109,22 @@ The sidebar will populate with your project's files, symbols, and functions.
 
 ## How it works
 
-CScout's web interface is a set of query pages (`xiquery.html`, `xfunquery.html`, `file.html`, etc.) that accept filter parameters and return HTML. The extension uses those same pages as an informal REST API:
+### JSON REST API endpoints (added in this GSoC work)
 
-| Data | CScout endpoint |
+| Data | Endpoint |
 |---|---|
-| Project list | `/sproject.html` |
-| Files per project | `/xfilequery.html?ro=1&writable=1&match=Y&skip=-1` |
-| All identifiers | `/xiquery.html?writable=1&match=Y&qi=1&skip=-1` |
-| Identifiers by kind | `/xiquery.html?writable=1&match=L&a22=1&skip=-1` (functions: `a22`, macros: `a14`, typedefs: `a19`, tags: `a10`, members: `a11`) |
-| Identifier locations | `/xiquery.html?ec=EID&qf=1` → then `/qsrc.html?id=FID&qt=id&ec=EID` |
-| File metrics | `/file.html?id=FID` |
-| Functions | `/xfunquery.html?writable=1&match=Y&qi=1&skip=-1` |
-| Callers / callees | `/funlist.html?f=FID&n=u` / `&n=d` |
+| Project list | `GET /api/projects` |
+| Set active project | `GET /api/setproj?projid=N` |
+| Files in current project | `GET /api/files?ro=1&writable=1&match=Y&skip=-1` |
+| All identifiers | `GET /api/identifiers` |
+| Per-file metrics | `GET /api/filemetrics?id=FID` |
+| Function list | `GET /api/functions` |
+| Function callers/callees | `GET /api/funlist?f=PTR&n=u` (callers) / `&n=d` (callees) |
+| Source with identifier locs | `GET /api/source?id=FID&ec=PTR` |
 
-`skip=-1` disables CScout's built-in pagination (defaults to 20 per page).
+Identifier occurrence locations fall back to `xiquery.html?ec=EID&qf=1` (HTML) since the HTML endpoint accepts pointer-string EIDs directly.
 
-On Windows, CScout (built under Cygwin) returns paths in Cygwin format (`/cygdrive/d/...`). The extension converts these to Windows paths automatically. On Linux/macOS, CScout returns native Unix paths and no conversion is needed.
+On Windows, CScout (built under Cygwin) returns paths in Cygwin format (`/cygdrive/d/...`). The extension converts these to Windows paths automatically.
 
 ---
 
@@ -132,7 +134,7 @@ On Windows, CScout (built under Cygwin) returns paths in Cygwin format (`/cygdri
 src/
 ├── extension.ts                 # entry point, command registration
 ├── analyzer/
-│   ├── client.ts                # HTTP client — raw TCP, HTML parsing
+│   ├── client.ts                # HTTP client — raw TCP, JSON REST API
 │   └── types.ts                 # shared interfaces
 ├── panels/
 │   ├── workspacePanel.ts        # project / file tree
@@ -170,18 +172,16 @@ Once connected, here is what you can explore:
 
 ## What remains for GSoC
 
-This POC covers the full extension side against CScout's existing HTML interface. No changes to the CScout C++ source were needed. The actual GSoC work splits into two halves.
+This branch (`feat/json-rest-api`) implements the JSON REST API layer in the CScout C++ backend and migrates the extension client to use it.
 
-**CScout side (C++ changes)**
+**Completed in this branch:**
+- ✅ JSON REST API endpoints added to `src/cscout.cpp` (`/api/projects`, `/api/files`, `/api/identifiers`, `/api/functions`, `/api/filemetrics`, `/api/funlist`, `/api/source`, `/api/setproj`)
+- ✅ Extension client (`client.ts`) rewritten to consume JSON instead of scraping HTML
+- ✅ Fixed "Analyze Current File" navigation in the File Metrics panel
+- ✅ Unused symbol diagnostics surfaced in the Problems panel
 
-To expose internal data structures through a proper REST interface, the same way the current web interface already works. That means adding SWILL endpoints that return structured data instead of HTML pages:
-
-- Add JSON-returning endpoints for identifiers, files, functions, and metrics
-- Add a dry-run mode to `file_refactor()` so rename operations return a diff instead of writing to disk directly
-
-**Extension side**
-
-- Replace the HTML parsing in `client.ts` with clean JSON responses once the REST layer exists
-- Refactoring preview shown as a VS Code diff editor
-- `CodeLens` annotations showing call count and cyclomatic complexity inline in the editor
-- Interactive call graph as a WebView panel with expand/collapse, not just a static tree
+**Remaining GSoC work:**
+- Dry-run `file_refactor()` — returns a diff instead of writing to disk
+- Refactoring preview in VS Code diff editor
+- `CodeLens` annotations for call count and cyclomatic complexity
+- Interactive call graph WebView panel

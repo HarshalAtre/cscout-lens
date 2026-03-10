@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CScoutAnalyzerClient } from './analyzer/client';
-import { CsFile, CsSymbol } from './analyzer/types';
+import { CsFile, CsSymbol, CsMetric } from './analyzer/types';
 import { WorkspacePanel } from './panels/workspacePanel';
 import { SymbolPanel } from './panels/symbolPanel';
 import { FileAnalysisPanel } from './panels/fileAnalysisPanel';
@@ -17,19 +17,23 @@ const log = vscode.window.createOutputChannel('CScout Lens');
 export function activate(context: vscode.ExtensionContext): void {
     log.appendLine('CScout Lens activated.');
 
-    const workspacePanel    = new WorkspacePanel();
-    const symbolPanel       = new SymbolPanel();
+    const workspacePanel = new WorkspacePanel();
+    const symbolPanel = new SymbolPanel();
     const fileAnalysisPanel = new FileAnalysisPanel();
-    const functionMapPanel  = new FunctionMapPanel();
+    const functionMapPanel = new FunctionMapPanel();
 
-    vscode.window.registerTreeDataProvider('cscoutLens.workspace',    workspacePanel);
-    vscode.window.registerTreeDataProvider('cscoutLens.symbols',      symbolPanel);
-    vscode.window.registerTreeDataProvider('cscoutLens.fileAnalysis', fileAnalysisPanel);
-    vscode.window.registerTreeDataProvider('cscoutLens.functionMap',  functionMapPanel);
+    vscode.window.registerTreeDataProvider('cscoutLens.workspace', workspacePanel);
+    vscode.window.registerTreeDataProvider('cscoutLens.symbols', symbolPanel);
+    const fileAnalysisTreeView = vscode.window.createTreeView('cscoutLens.fileAnalysis', {
+        treeDataProvider: fileAnalysisPanel,
+    });
+    fileAnalysisPanel.setTreeView(fileAnalysisTreeView);
+    context.subscriptions.push(fileAnalysisTreeView);
+    vscode.window.registerTreeDataProvider('cscoutLens.functionMap', functionMapPanel);
 
     // Language feature handlers
     const hoverHandler = new CScoutHoverHandler();
-    const navHandler   = new CScoutNavigationHandler(() => analyzer);
+    const navHandler = new CScoutNavigationHandler(() => analyzer);
 
     context.subscriptions.push(
         vscode.languages.registerHoverProvider({ language: 'c' }, hoverHandler),
@@ -39,7 +43,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
         vscode.commands.registerCommand('cscoutLens.connect', async () => {
-            const cfg  = vscode.workspace.getConfiguration('cscoutLens');
+            const cfg = vscode.workspace.getConfiguration('cscoutLens');
             const host = cfg.get<string>('host') ?? 'localhost';
             const port = cfg.get<number>('port') ?? 8081;
 
@@ -172,12 +176,12 @@ export function deactivate(): void {
 }
 
 async function refreshAll(
-    workspacePanel:    WorkspacePanel,
-    symbolPanel:       SymbolPanel,
+    workspacePanel: WorkspacePanel,
+    symbolPanel: SymbolPanel,
     fileAnalysisPanel: FileAnalysisPanel,
-    functionMapPanel:  FunctionMapPanel,
-    hoverHandler:      CScoutHoverHandler,
-    navHandler:        CScoutNavigationHandler,
+    functionMapPanel: FunctionMapPanel,
+    hoverHandler: CScoutHoverHandler,
+    navHandler: CScoutNavigationHandler,
 ): Promise<void> {
     if (!analyzer) { return; }
     const client = analyzer;
@@ -206,13 +210,18 @@ async function refreshAll(
 
             progress.report({ message: 'Loading file metrics…' });
             const allFiles = [...fileMap.values()].flat();
-            const metricsEntries = await Promise.all(
-                allFiles.map(f =>
-                    client.getFileMetrics(f.fid)
-                        .then(m => ({ fileName: f.path, metrics: m }))
-                        .catch(() => ({ fileName: f.path, metrics: [] })),
-                ),
-            );
+            const metricsEntries: Array<{ fileName: string; metrics: CsMetric[] }> = [];
+            for (const f of allFiles) {
+                try {
+                    const m = await client.getFileMetrics(f.fid);
+                    log.appendLine(`  metrics: ${f.path} → ${m.length} entries`);
+                    metricsEntries.push({ fileName: f.path, metrics: m });
+                } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    log.appendLine(`  metrics FAILED: fid=${f.fid} ${f.path}: ${msg}`);
+                    metricsEntries.push({ fileName: f.path, metrics: [] });
+                }
+            }
             fileAnalysisPanel.loadData(metricsEntries, client);
 
             progress.report({ message: 'Loading functions…' });

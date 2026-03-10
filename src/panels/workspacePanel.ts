@@ -59,7 +59,10 @@ export class WorkspacePanel implements vscode.TreeDataProvider<WorkspaceNode> {
     getChildren(element?: WorkspaceNode): vscode.ProviderResult<WorkspaceNode[]> {
         if (!element) {
             if (this._projects.length === 0) { return []; }
-            return this._projects.map(p => new ProjectNode(p));
+            // Filter out CScout's implicit "unspecified" project (pid 0 or name "unspecified")
+            return this._projects
+                .filter(p => p.name !== 'unspecified' && p.pid !== 0)
+                .map(p => new ProjectNode(p));
         }
         if (element instanceof ProjectNode) {
             const files = this._fileMap.get(element.entry.pid) ?? [];
