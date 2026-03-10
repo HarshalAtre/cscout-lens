@@ -2,48 +2,47 @@ import * as net from 'net';
 import * as path from 'path';
 import { CsSymbol, CsFile, CsFunction, CsMetric, CsLocation, CsProjectEntry } from './types';
 
-function extractLinks(html: string, hrefPattern: RegExp): Array<{ href: string; text: string }> {
-    const results: Array<{ href: string; text: string }> = [];
-    const tag = /<a\s+href="([^"]+)"[^>]*>([^<]+)<\/a>/gi;
-    let m: RegExpExecArray | null;
-    while ((m = tag.exec(html)) !== null) {
-        if (hrefPattern.test(m[1])) {
-            results.push({ href: m[1], text: m[2].trim() });
-        }
-    }
-    return results;
-}
-
-function tableRows(html: string): string[][] {
-    const rows: string[][] = [];
-    const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
-    let rowM: RegExpExecArray | null;
-    while ((rowM = rowRe.exec(html)) !== null) {
-        const cells: string[] = [];
-        let cellM: RegExpExecArray | null;
-        while ((cellM = cellRe.exec(rowM[1])) !== null) {
-            cells.push(cellM[1].replace(/<[^>]+>/g, '').trim());
-        }
-        if (cells.length > 0) { rows.push(cells); }
-    }
-    return rows;
-}
-
-function qparam(href: string, key: string): string | undefined {
-    const m = new RegExp(`[?&]${key}=([^&]+)`).exec(href);
-    return m ? decodeURIComponent(m[1]) : undefined;
-}
-
 function toWinPath(p: string): string {
     let result = p;
     const cyg = /^\/cygdrive\/([a-zA-Z])(\/.*)?$/.exec(p);
     if (cyg) {
         const drive = cyg[1].toUpperCase();
-        const rest  = (cyg[2] ?? '').replace(/\//g, '\\');
+        const rest = (cyg[2] ?? '').replace(/\//g, '\\');
         result = `${drive}:${rest}`;
     }
     return path.normalize(result);
+}
+
+// ── JSON response interfaces (mirror the CScout /api/ shapes) ────────────────
+
+interface ApiProject { pid: number; name: string }
+interface ApiFile { fid: number; name: string; dir: string; path: string; readonly: boolean }
+interface ApiIdentifier {
+    eid: string; name: string; size: number;
+    readonly: boolean; tag: boolean; member: boolean;
+    macro: boolean; typedef: boolean; function: boolean;
+    cscope: boolean; lscope: boolean; unused: boolean; xfile: boolean;
+}
+interface ApiFunction {
+    fid: string; name: string; is_static: boolean;
+    is_defined: boolean; is_macro: boolean;
+    ncallers: number; ncallees: number;
+    file?: string; line?: number; file_id?: number;
+}
+interface ApiFunlistEntry {
+    fid: string; name: string; is_static: boolean; is_macro: boolean;
+}
+interface ApiFileMetrics {
+    fid: number; path: string; readonly: boolean;
+    metrics: Array<{ name: string; pre_cpp?: number; post_cpp?: number }>;
+}
+interface ApiSourceMatch { line: number; col: number }
+interface ApiSourceResult { fid: number; path: string; matches: ApiSourceMatch[] }
+interface ApiIdDetail {
+    eid: string; name: string; size: number;
+    readonly: boolean; unused: boolean; xfile: boolean;
+    attributes: Record<string, boolean>;
+    projects: string[];
 }
 
 export class CScoutAnalyzerClient {
@@ -64,193 +63,191 @@ export class CScoutAnalyzerClient {
         }
     }
 
+    // ── Projects ──────────────────────────────────────────────────────────
+
     async getProjects(): Promise<CsProjectEntry[]> {
-        const html = await this.fetch('/sproject.html');
-        const links = extractLinks(html, /setproj\.html/);
-        const seen = new Set<number>();
-        const projects: CsProjectEntry[] = [];
-        for (const lnk of links) {
-            const pidStr = qparam(lnk.href, 'projid');
-            if (!pidStr) { continue; }
-            const pid = parseInt(pidStr, 10);
-            if (pid === 0) { continue; }
-            if (!seen.has(pid)) {
-                seen.add(pid);
-                projects.push({ pid, name: lnk.text });
-            }
-        }
-        return projects;
+        const body = await this.fetch('/api/projects');
+        const data: ApiProject[] = JSON.parse(body);
+        return data.map(p => ({ pid: p.pid, name: p.name }));
     }
 
     async getProjectFiles(pid: number): Promise<CsFile[]> {
-        await this.fetch(`/setproj.html?projid=${pid}`);
-        const html = await this.fetch('/xfilequery.html?ro=1&writable=1&match=Y&skip=-1');
-        return this._parseFileList(html);
+        // Set project scope first, then query files
+        await this.fetch(`/api/setproj?projid=${pid}`);
+        const body = await this.fetch('/api/files?ro=1&writable=1&match=Y&skip=-1');
+        const data: ApiFile[] = JSON.parse(body);
+        return data.map(f => ({
+            fid: f.fid,
+            path: toWinPath(f.path),
+            writable: !f.readonly,
+        }));
     }
 
-    private _parseFileList(html: string): CsFile[] {
-        const results: CsFile[] = [];
-        const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-        let rowM: RegExpExecArray | null;
-        while ((rowM = rowRe.exec(html)) !== null) {
-            const row = rowM[1];
-            const fidLink = /file\.html\?id=(\d+)">([^<]+)<\/a>/i.exec(row);
-            if (!fidLink) { continue; }
-            const fid = parseInt(fidLink[1], 10);
-            const fileName = fidLink[2].trim();
-            const dirM = /<td[^>]*>\s*([^<]+?)\s*<\/td>/i.exec(row);
-            const dir = dirM ? dirM[1].trim() : '';
-            results.push({ fid, path: toWinPath(dir + fileName), writable: true });
-        }
-        return results;
-    }
+    // ── Symbols / Identifiers ─────────────────────────────────────────────
 
-    // iquery.html attribute flags: a10=tag, a11=member, a14=macro, a19=typedef, a22=function
-    private static readonly KIND_ATTRS: Array<{ kind: CsSymbol['kind']; attr: string }> = [
-        { kind: 'function', attr: 'a22=1' },
-        { kind: 'macro',    attr: 'a14=1' },
-        { kind: 'typedef',  attr: 'a19=1' },
-        { kind: 'tag',      attr: 'a10=1' },
-        { kind: 'member',   attr: 'a11=1' },
+    private static readonly KIND_ATTRS: Array<{ kind: CsSymbol['kind']; jsonKey: string }> = [
+        { kind: 'function', jsonKey: 'function' },
+        { kind: 'macro', jsonKey: 'macro' },
+        { kind: 'typedef', jsonKey: 'typedef' },
+        { kind: 'tag', jsonKey: 'tag' },
+        { kind: 'member', jsonKey: 'member' },
     ];
 
     async getSymbols(unusedOnly = false): Promise<CsSymbol[]> {
         const unusedFlag = unusedOnly ? '&unused=1' : '';
-        const allHtml = await this.fetch(
-            `/xiquery.html?writable=1&match=Y&qi=1&skip=-1${unusedFlag}`,
+        const body = await this.fetch(
+            `/api/identifiers?writable=1&match=Y&qi=1&skip=-1${unusedFlag}`,
         );
-        const allLinks = extractLinks(allHtml, /id\.html/);
-
-        const kindMap = new Map<string, CsSymbol['kind']>();
-        for (const { kind, attr } of CScoutAnalyzerClient.KIND_ATTRS) {
-            try {
-                const html = await this.fetch(
-                    `/xiquery.html?writable=1&match=L&qi=1&${attr}&skip=-1${unusedFlag}`,
-                );
-                for (const lnk of extractLinks(html, /id\.html/)) {
-                    const eid = qparam(lnk.href, 'id') ?? lnk.href;
-                    if (!kindMap.has(eid)) { kindMap.set(eid, kind); }
+        const data: ApiIdentifier[] = JSON.parse(body);
+        return data.map(id => {
+            let kind: CsSymbol['kind'] = 'variable';
+            for (const { kind: k, jsonKey } of CScoutAnalyzerClient.KIND_ATTRS) {
+                if ((id as unknown as Record<string, unknown>)[jsonKey]) {
+                    kind = k;
+                    break;
                 }
-            } catch { /* fall back to 'variable' */ }
-        }
-
-        return allLinks.map(lnk => {
-            const eid = qparam(lnk.href, 'id') ?? lnk.href;
-            return { eid, name: lnk.text, kind: kindMap.get(eid) ?? 'variable', unused: unusedOnly };
+            }
+            return { eid: id.eid, name: id.name, kind, unused: id.unused };
         });
     }
 
     async getSymbolLocations(eid: string): Promise<CsLocation[]> {
-        const fileListHtml = await this.fetch(
+        // Step 1: find which files contain this identifier via html endpoint
+        // (it accepts the pointer-string eid directly)
+        const htmlBody = await this.fetch(
             `/xiquery.html?ec=${encodeURIComponent(eid)}&qf=1&skip=-1`,
         );
 
+        // Parse file IDs and paths from the HTML table rows
+        const fileEntries: Array<{ fid: number; fullPath: string }> = [];
+        const fidRe = /file\.html\?id=(\d+)/gi;
+        const pathRe = /<td[^>]*>\s*([^<]+?)\s*<\/td>\s*<td[^>]*><a\s[^>]*>([^<]+)<\/a>/gi;
+
+        // Simpler: just scan for all file.html?id= links and paired path text
         const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
-        const dirRe = /<td[^>]*>\s*([^<]+?)\s*<\/td>/i;
-        const fidRe = /file\.html\?id=(\d+)/i;
-        const nameFromLinkRe = /file\.html\?id=\d+">([^<]+)<\/a>/i;
-        const files: Array<{ fid: number; fullPath: string }> = [];
-        let rowM: RegExpExecArray | null;
-        while ((rowM = rowRe.exec(fileListHtml)) !== null) {
-            const row = rowM[1];
-            const dirM = dirRe.exec(row);
-            const fidM = fidRe.exec(row);
-            const nameM = nameFromLinkRe.exec(row);
-            if (fidM && nameM) {
-                const dir = dirM ? dirM[1].trim() : '';
-                const name = nameM[1].trim();
-                const rawPath = dir ? dir + name : name;
-                files.push({
-                    fid: parseInt(fidM[1], 10),
-                    fullPath: toWinPath(rawPath),
-                });
+        let rowm: RegExpExecArray | null;
+        while ((rowm = rowRe.exec(htmlBody)) !== null) {
+            const row = rowm[1];
+            const fm = /file\.html\?id=(\d+)/.exec(row);
+            if (!fm) { continue; }
+            const fid = parseInt(fm[1], 10);
+            // Extract path from the row text (dir + filename)
+            const cellRe = /<td[^>]*>\s*([^<\n]+?)\s*<\/td>/gi;
+            const cells: string[] = [];
+            let cm: RegExpExecArray | null;
+            while ((cm = cellRe.exec(row)) !== null) {
+                cells.push(cm[1].trim());
+            }
+            // Also extract linked filename text
+            const linkText = /<a\s[^>]*>([^<]+)<\/a>/.exec(row);
+            const fname = linkText ? linkText[1].trim() : '';
+            // Compose path: first non-empty cell is dir, linked text is filename
+            const dir = cells.find(c => c.length > 0 && !c.includes('<')) ?? '';
+            const rawPath = fname ? (dir ? dir + fname : fname) : dir;
+            if (rawPath) {
+                fileEntries.push({ fid, fullPath: toWinPath(rawPath) });
             }
         }
 
-        if (files.length === 0) { return []; }
+        if (fileEntries.length === 0) { return []; }
 
+        // Step 2: get exact line numbers from /api/source for each file
         const locations: CsLocation[] = [];
-        for (const file of files.slice(0, 5)) {
+        for (const file of fileEntries.slice(0, 10)) {
             try {
-                const srcHtml = await this.fetch(
-                    `/qsrc.html?id=${file.fid}&qt=id&ec=${encodeURIComponent(eid)}`,
+                const srcBody = await this.fetch(
+                    `/api/source?id=${file.fid}&ec=${encodeURIComponent(eid)}`,
                 );
-                const tokenRe = /<a\s+(?:name="(\d+)"|href="id\.html\?id=([^"]+)")/gi;
-                let currentLine = 1;
-                let tm: RegExpExecArray | null;
-                while ((tm = tokenRe.exec(srcHtml)) !== null) {
-                    if (tm[1]) {
-                        currentLine = parseInt(tm[1], 10);
-                    } else if (tm[2] === eid) {
-                        locations.push({ filePath: file.fullPath, line: currentLine, column: 0 });
-                    }
+                const srcData: ApiSourceResult = JSON.parse(srcBody);
+                const resolvedPath = toWinPath(srcData.path);
+                for (const m of srcData.matches) {
+                    locations.push({
+                        filePath: resolvedPath,
+                        line: m.line,
+                        column: m.col,
+                    });
                 }
-            } catch { /* skip file on error */ }
+                // If api/source returned no matches but file was listed,
+                // at least show the file at line 1
+                if (srcData.matches.length === 0 && resolvedPath) {
+                    locations.push({ filePath: resolvedPath, line: 1, column: 0 });
+                }
+            } catch {
+                // Fall back to file at line 1
+                if (file.fullPath) {
+                    locations.push({ filePath: file.fullPath, line: 1, column: 0 });
+                }
+            }
         }
 
         return locations;
     }
 
-    // ── file metrics ───────────────────────────────────────────────────────
+    // ── File metrics ───────────────────────────────────────────────────────
 
     async getFileMetrics(fid: number): Promise<CsMetric[]> {
-        const html = await this.fetch(`/file.html?id=${fid}`);
-        const tableM = /<table[^>]*class=['"]metrics['"][^>]*>([\s\S]*?)<\/table>/i.exec(html);
-        if (!tableM) { return []; }
-        const rows = tableRows(tableM[1]);
-        const metrics: CsMetric[] = [];
-        for (const row of rows) {
-            if (row.length < 2) { continue; }
-            const label = row[0];
-            // Table has 3 cols: Metric | Pre-cpp | Post-cpp
-            // Many rows have &mdash; in Post-cpp — fall back to Pre-cpp value
-            const postCpp = parseFloat(row[2] ?? '');
-            const preCpp  = parseFloat(row[1] ?? '');
-            const val = !isNaN(postCpp) ? postCpp : !isNaN(preCpp) ? preCpp : NaN;
-            if (label && !isNaN(val)) {
-                metrics.push({ label, value: val });
-            }
+        const body = await this.fetch(`/api/filemetrics?id=${fid}`);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data: any = JSON.parse(body);
+        if (!data || !Array.isArray(data.metrics)) {
+            throw new Error(`Unexpected response from /api/filemetrics?id=${fid}: ${body.slice(0, 120)}`);
         }
-        return metrics;
+        return (data.metrics as Array<{ name: string; pre_cpp?: number; post_cpp?: number }>)
+            .map(m => ({
+                label: m.name,
+                // Prefer post_cpp, fall back to pre_cpp
+                value: m.post_cpp !== undefined ? m.post_cpp
+                    : m.pre_cpp !== undefined ? m.pre_cpp
+                        : 0,
+            }));
     }
 
-    // ── functions ──────────────────────────────────────────────────────────
+    // ── Functions ──────────────────────────────────────────────────────────
 
     async getFunctions(definedOnly = false): Promise<CsFunction[]> {
-        // writable=1&match=Y&qi=1 matches the pattern CScout uses for defined functions
         const qs = definedOnly ? '&defined=1' : '';
-        const html = await this.fetch(`/xfunquery.html?writable=1&match=Y&qi=1&skip=-1${qs}`);
-        return this._parseFunctionList(html);
+        const body = await this.fetch(
+            `/api/functions?writable=1&match=Y&qi=1&skip=-1${qs}`,
+        );
+        const data: ApiFunction[] = JSON.parse(body);
+        const seen = new Set<string>();
+        return data.filter(f => {
+            if (seen.has(f.name)) { return false; }
+            seen.add(f.name);
+            return true;
+        }).map(f => ({
+            fid: f.fid,
+            name: f.name,
+            isStatic: f.is_static,
+        }));
     }
 
     async getCallers(fid: string): Promise<CsFunction[]> {
-        const html = await this.fetch(`/funlist.html?f=${encodeURIComponent(fid)}&n=u`);
-        return this._parseFunctionList(html);
+        const body = await this.fetch(
+            `/api/funlist?f=${encodeURIComponent(fid)}&n=u`,
+        );
+        const data: ApiFunlistEntry[] = JSON.parse(body);
+        // Server already filters self-references; extra client-side safety
+        return data
+            .filter(f => f.fid !== fid)
+            .map(f => ({ fid: f.fid, name: f.name, isStatic: f.is_static }));
     }
 
     async getCallees(fid: string): Promise<CsFunction[]> {
-        const html = await this.fetch(`/funlist.html?f=${encodeURIComponent(fid)}&n=d`);
-        return this._parseFunctionList(html);
+        const body = await this.fetch(
+            `/api/funlist?f=${encodeURIComponent(fid)}&n=d`,
+        );
+        const data: ApiFunlistEntry[] = JSON.parse(body);
+        return data.map(f => ({
+            fid: f.fid,
+            name: f.name,
+            isStatic: f.is_static,
+        }));
     }
 
-    private _parseFunctionList(html: string): CsFunction[] {
-        const links = extractLinks(html, /fun\.html/);
-        const seen = new Set<string>();
-        const fns: CsFunction[] = [];
-        for (const lnk of links) {
-            const name = lnk.text;
-            if (seen.has(name)) { continue; }
-            seen.add(name);
-            fns.push({
-                fid: qparam(lnk.href, 'f') ?? lnk.href,
-                name,
-                isStatic: /\bstatic\b/i.test(lnk.href),
-            });
-        }
-        return fns;
-    }
+    // ── HTTP fetch (raw TCP for SWILL compatibility) ───────────────────────
 
-    fetch(path: string): Promise<string> {
+    fetch(urlPath: string): Promise<string> {
         return new Promise((resolve, reject) => {
             const withoutScheme = this._base.replace(/^https?:\/\//, '');
             const [host, portStr] = withoutScheme.split(':');
@@ -272,7 +269,7 @@ export class CScoutAnalyzerClient {
 
             socket.on('connect', () => {
                 socket.write(
-                    `GET ${path} HTTP/1.0\r\n` +
+                    `GET ${urlPath} HTTP/1.0\r\n` +
                     `Host: ${host}:${port}\r\n` +
                     `Connection: close\r\n` +
                     `\r\n`
@@ -287,14 +284,14 @@ export class CScoutAnalyzerClient {
 
                 const firstNewline = raw.indexOf('\n');
                 if (firstNewline === -1) {
-                    reject(new Error(`Empty response from ${path}`));
+                    reject(new Error(`Empty response from ${urlPath}`));
                     return;
                 }
                 const statusLine = raw.substring(0, firstNewline).trim();
                 const statusMatch = /HTTP\/\S+\s+(\d+)/.exec(statusLine);
                 const code = statusMatch ? parseInt(statusMatch[1], 10) : 0;
                 if (code < 200 || code >= 300) {
-                    reject(new Error(`HTTP ${code} for ${path}: ${statusLine}`));
+                    reject(new Error(`HTTP ${code} for ${urlPath}: ${statusLine}`));
                     return;
                 }
 
@@ -309,8 +306,8 @@ export class CScoutAnalyzerClient {
                 resolve(raw.substring(bodyStart));
             });
 
-            socket.on('timeout', () => fail(new Error(`Timeout fetching ${path}`)));
-            socket.on('error',   (err) => fail(err));
+            socket.on('timeout', () => fail(new Error(`Timeout fetching ${urlPath}`)));
+            socket.on('error', (err) => fail(err));
         });
     }
 }
