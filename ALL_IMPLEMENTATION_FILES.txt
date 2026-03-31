@@ -1,0 +1,145 @@
+# CScout-Lens All-in-One Implementation Files
+# Extract each section below into the specified file path
+
+This file contains all the implementation code. 
+After running setup-directories.bat, copy each section to its respective file.
+
+================================================================================
+FILE: sample/calc/main.c
+================================================================================
+#include <stdio.h>
+#include <stdlib.h>
+#include "calc.h"
+#include "utils.h"
+
+int main(int argc, char *argv[]) {
+    int result;
+    
+    printf("Simple Calculator\n");
+    printf("=================\n\n");
+    
+    result = calc_add(10, 5);
+    print_result("Addition", result);
+    
+    result = calc_sub(10, 5);
+    print_result("Subtraction", result);
+    
+    result = calc_mul(10, 5);
+    print_result("Multiplication", result);
+    
+    result = calc_div(10, 5);
+    print_result("Division", result);
+    
+    return 0;
+}
+
+================================================================================
+FILE: sample/calc/calc.c
+================================================================================
+#include "calc.h"
+
+int calc_add(int a, int b) {
+    return a + b;
+}
+
+int calc_sub(int a, int b) {
+    return a - b;
+}
+
+int calc_mul(int a, int b) {
+    return a * b;
+}
+
+int calc_div(int a, int b) {
+    if (b == 0) {
+        return 0;  // Error: division by zero
+    }
+    return a / b;
+}
+
+================================================================================
+FILE: sample/calc/calc.h
+================================================================================
+#ifndef CALC_H
+#define CALC_H
+
+#define MAX_BUF 256
+#define EPSILON 0.0001
+#define DEBUG_MODE 0
+
+typedef struct {
+    double value;
+    int error_code;
+} CalcResult;
+
+typedef enum {
+    OP_ADD,
+    OP_SUB,
+    OP_MUL,
+    OP_DIV
+} calc_op_t;
+
+int calc_add(int a, int b);
+int calc_sub(int a, int b);
+int calc_mul(int a, int b);
+int calc_div(int a, int b);
+
+#endif /* CALC_H */
+
+================================================================================
+FILE: sample/calc/utils.c
+================================================================================
+#include <stdio.h>
+#include "utils.h"
+#include "calc.h"
+
+void print_result(const char *op, int result) {
+    printf("%s result: %d\n", op, result);
+    if (result > 100) {
+        printf("  (Large value detected)\n");
+    }
+}
+
+static int parse_input(const char *input) {
+    int value = 0;
+    int i = 0;
+    
+    while (input[i] >= '0' && input[i] <= '9') {
+        value = value * 10 + (input[i] - '0');
+        i++;
+    }
+    
+    return value;
+}
+
+static void format_output(char *buffer, int value) {
+    sprintf(buffer, "Result: %d", value);
+}
+
+static void debug_log(const char *message) {
+    #if DEBUG_MODE
+    printf("[DEBUG] %s\n", message);
+    #endif
+}
+
+================================================================================
+FILE: sample/calc/utils.h
+================================================================================
+#ifndef UTILS_H
+#define UTILS_H
+
+#include "calc.h"
+
+void print_result(const char *op, int result);
+
+#endif /* UTILS_H */
+
+================================================================================
+INSTRUCTIONS FOR USE:
+================================================================================
+
+1. Run: setup-directories.bat
+2. Copy each section above to its respective file path
+3. Continue with next phase (I'll create TypeScript files next)
+
+OR - Wait for me to create a script that can extract these automatically!

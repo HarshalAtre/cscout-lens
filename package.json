@@ -19,7 +19,12 @@
       { "command": "cscoutLens.refresh",           "title": "CScout Lens: Refresh Analysis", "icon": "$(sync)" },
       { "command": "cscoutLens.showFileAnalysis",  "title": "CScout Lens: Analyze Current File" },
       { "command": "cscoutLens.focusFunction",     "title": "CScout Lens: Map Function Calls" },
-      { "command": "cscoutLens.listUnused",        "title": "CScout Lens: List Unused Symbols", "icon": "$(warning)" }
+      { "command": "cscoutLens.listUnused",        "title": "CScout Lens: List Unused Symbols", "icon": "$(warning)" },
+      { "command": "cscoutLens.openFilter",        "title": "CScout Lens: Filter Identifiers", "icon": "$(filter)" },
+      { "command": "cscoutLens.openFileFilter",    "title": "CScout Lens: Filter Files", "icon": "$(filter)" },
+      { "command": "cscoutLens.openFunctionFilter","title": "CScout Lens: Filter Functions", "icon": "$(filter)" },
+      { "command": "cscoutLens.showCallGraph",     "title": "CScout Lens: Show Call Graph", "icon": "$(type-hierarchy)" },
+      { "command": "cscoutLens.showFullCallGraph", "title": "CScout Lens: Show Full Call Graph", "icon": "$(graph)" }
     ],
     "viewsContainers": {
       "activitybar": [{
@@ -48,28 +53,73 @@
           "type": "number",
           "default": 8081,
           "description": "Port where CScout is listening (default: 8081)"
+        },
+        "cscoutLens.initialLoadPageSize": {
+          "type": "number",
+          "default": 500,
+          "description": "Number of items to load per page"
+        },
+        "cscoutLens.initialLoadMaxIdentifiers": {
+          "type": "number",
+          "default": 5000,
+          "description": "Maximum number of identifiers to load initially"
+        },
+        "cscoutLens.initialLoadMaxFiles": {
+          "type": "number",
+          "default": 3000,
+          "description": "Maximum number of files to load initially"
+        },
+        "cscoutLens.initialLoadMaxFunctions": {
+          "type": "number",
+          "default": 4000,
+          "description": "Maximum number of functions to load initially"
         }
       }
     },
     "menus": {
       "editor/context": [
         { "command": "cscoutLens.showFileAnalysis", "when": "resourceLangId == c", "group": "cscoutLens" },
-        { "command": "cscoutLens.focusFunction",    "when": "resourceLangId == c", "group": "cscoutLens" }
+        { "command": "cscoutLens.focusFunction",    "when": "resourceLangId == c", "group": "cscoutLens" },
+        { "command": "cscoutLens.showCallGraph",    "when": "resourceLangId == c", "group": "cscoutLens" }
+      ],
+      "view/item/context": [
+        { "command": "cscoutLens.showCallGraph", "when": "viewItem == cscoutLens.function" }
       ],
       "view/title": [
-        { "command": "cscoutLens.listUnused", "when": "view == cscoutLens.symbols",   "group": "navigation" },
-        { "command": "cscoutLens.refresh",    "when": "view == cscoutLens.workspace", "group": "navigation" }
+        { "command": "cscoutLens.listUnused",        "when": "view == cscoutLens.symbols",     "group": "navigation" },
+        { "command": "cscoutLens.openFilter",        "when": "view == cscoutLens.symbols",     "group": "navigation" },
+        { "command": "cscoutLens.refresh",           "when": "view == cscoutLens.workspace",   "group": "navigation" },
+        { "command": "cscoutLens.openFileFilter",    "when": "view == cscoutLens.fileAnalysis","group": "navigation" },
+        { "command": "cscoutLens.openFunctionFilter","when": "view == cscoutLens.functionMap", "group": "navigation" }
+      ],
+      "commandPalette": [
+        { "command": "cscoutLens.showCallGraph",     "when": "resourceLangId == c" },
+        { "command": "cscoutLens.showFullCallGraph", "when": "resourceLangId == c" }
       ]
     }
   },
   "scripts": {
+    "setup":             "node make-dirs.js && node master-setup.js",
     "compile":           "tsc -p ./",
     "watch":             "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "server":            "npx ts-node src/scripts/mockServer.ts",
+    "test":              "npm run compile && mocha out/test/**/*.test.js --timeout 10000",
+    "lint":              "eslint src --ext ts"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
     "@types/node":   "^20.11.0",
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "chai": "^6.2.2",
+    "eslint": "^8.56.0",
+    "mocha": "^11.7.5",
+    "ts-node": "^10.9.2",
     "typescript":    "^5.3.0"
+  },
+  "dependencies": {
   }
 }
